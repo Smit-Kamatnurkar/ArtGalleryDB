@@ -1,0 +1,35 @@
+# Build outputs
+backend/target/
+artgallery-dbms-workbench/dist/
+artgallery-dbms-workbench/build/
+
+# Dependencies
+node_modules/
+artgallery-dbms-workbench/node_modules/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# IDE / OS
+.DS_Store
+*.log
+*.swp
+.idea/
+.vscode/
+*.iml
+
+# Root noise (frontend lockfile is tracked at artgallery-dbms-workbench/package-lock.json)
+/package-lock.json
+
+# Database
+*.dump
+*.sql.gz
+*.sqlite
+*.db
+
+# Test / coverage
+coverage/
+*.lcov

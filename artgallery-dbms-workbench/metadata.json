@@ -1,0 +1,6 @@
+{
+  "name": "ArtGallery DBMS Workbench",
+  "description": "Autonomous Oracle 23ai curatorial workbench for managing museum-grade attributions, SQL execution playground, relational schemas, and JDBC/ODBC drivers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
