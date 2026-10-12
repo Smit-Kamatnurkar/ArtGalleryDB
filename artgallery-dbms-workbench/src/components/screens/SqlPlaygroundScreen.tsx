@@ -1,11 +1,93 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../../services/api';
+import { api, SchemaTablePayload } from '../../services/api';
 
 interface SqlPlaygroundScreenProps {
   initialQuery?: string;
   onShowToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
   onExecuted?: () => void | Promise<void>;
 }
+
+// Schema Table Node Component
+const SchemaTableNode: React.FC<{
+  table: SchemaTablePayload;
+  onInsertToken: (token: string) => void;
+  searchTerm: string;
+}> = ({ table, onInsertToken, searchTerm }) => {
+  const [isOpen, setIsOpen] = useState(true);
+  const filteredColumns = table.columns.filter((col) =>
+    col.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  return (
+    <div className="flex flex-col rounded bg-[#f4f3f1]/70 border border-[#e8e7e4] overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center justify-between w-full px-2.5 py-2 hover:bg-[#e9e8e5] transition-colors text-left cursor-pointer"
+      >
+        <div className="flex items-center gap-1.5">
+          <span
+            className={`material-symbols-outlined text-[16px] text-[#57423e] transition-transform duration-150 ${
+              isOpen ? 'rotate-90' : ''
+            }`}
+          >
+            chevron_right
+          </span>
+          <span className="material-symbols-outlined text-[16px] text-[#633808]">
+            table_chart
+          </span>
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              onInsertToken(table.name);
+            }}
+            className="font-semibold text-[#1a1c1a] hover:text-[#7e2110] transition-colors"
+          >
+            {table.name}
+          </span>
+        </div>
+        <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#e3e2e0] text-[#57423e]">
+          {table.columnsCount} cols
+        </span>
+      </button>
+
+      {isOpen && (
+        <div className="flex flex-col py-1 pl-6 pr-2 gap-1 bg-white border-t border-[#e8e7e4]">
+          {filteredColumns.map((col) => (
+            <div
+              key={col.name}
+              onClick={() => onInsertToken(`${table.name}.${col.name}`)}
+              className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-[#f4f3f1] transition-colors cursor-pointer group"
+            >
+              <div className="flex items-center gap-1.5 min-w-0">
+                {(col.isPk || col.isFk) && (
+                  <span
+                    className={`material-symbols-outlined text-[13px] ${
+                      col.isPk ? 'text-[#7e2110]' : 'text-[#2e6a4f]'
+                    }`} title={col.isPk ? 'Primary Key' : 'Foreign Key'}
+                  >
+                    {col.isPk ? 'key' : 'link'}
+                  </span>
+                )}
+                <span className="text-[#1a1c1a] truncate group-hover:text-[#7e2110]">
+                  {col.name}
+                </span>
+              </div>
+              <span className="text-[9px] text-[#57423e] bg-[#efeeeb] px-1 py-0.5 rounded font-mono">
+                {col.dataType} {col.isPk ? '• PK' : col.isFk ? '• FK' : ''}
+              </span>
+            </div>
+          ))}
+          {filteredColumns.length !== table.columns.length && (
+            <div className="pt-1 text-[10px] text-[#8c7873] italic">
+              + {table.columns.length - filteredColumns.length} more columns...
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const TEMPLATES = {
   join_high_value: `SELECT
@@ -62,22 +144,29 @@ export const SqlPlaygroundScreen: React.FC<SqlPlaygroundScreenProps> = ({
   const [selectedTemplate, setSelectedTemplate] = useState('join_high_value');
   const [showExplainPlan, setShowExplainPlan] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
-  const [executionTime, setExecutionTime] = useState(24);
-  const [columns, setColumns] = useState<string[]>([
-    'code', 'title', 'artist_name', 'medium', 'price', 'status'
-  ]);
-  const [queryRows, setQueryRows] = useState<Record<string, unknown>[]>([
-    { code: 'ART-2023-112', title: 'Composition with Yellow, Blue and Ochre', artist_name: 'Piet Mondrian', medium: 'Oil on linen', price: 1450000, status: 'Exhibited' },
-    { code: 'ART-2023-044', title: 'Nighthawks Study #3', artist_name: 'Edward Hopper', medium: 'Oil on canvas', price: 875000, status: 'Exhibited' },
-    { code: 'ART-2024-001', title: 'Study for Broad Canvas VI', artist_name: 'Helen Frankenthaler', medium: 'Acrylic on unprimed canvas', price: 620000, status: 'Exhibited' },
-    { code: 'ART-2022-078', title: 'Geometric Monolith 12', artist_name: 'Eduardo Chillida', medium: 'Forged iron and granite', price: 410000, status: 'Exhibited' }
-  ]);
+  const [executionTime, setExecutionTime] = useState(0);
+  const [columns, setColumns] = useState<string[]>([]);
+  const [queryRows, setQueryRows] = useState<Record<string, unknown>[]>([]);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [selectedRowId, setSelectedRowId] = useState<number | null>(null);
   const [schemaSearch, setSchemaSearch] = useState('');
-  const [isArtistOpen, setIsArtistOpen] = useState(true);
-  const [isArtworkOpen, setIsArtworkOpen] = useState(true);
   const [isCompact, setIsCompact] = useState(false);
+  const [schemaTables, setSchemaTables] = useState<SchemaTablePayload[]>([]);
+  const [schemaLoading, setSchemaLoading] = useState(true);
+
+  // Fetch schema from backend on mount
+  useEffect(() => {
+    api.schema()
+      .then((data) => {
+        setSchemaTables(data);
+      })
+      .catch((err) => {
+        console.warn('Failed to load schema:', err);
+      })
+      .finally(() => {
+        setSchemaLoading(false);
+      });
+  }, []);
 
   useEffect(() => {
     if (initialQuery) {
@@ -132,6 +221,9 @@ export const SqlPlaygroundScreen: React.FC<SqlPlaygroundScreenProps> = ({
     }
     setIsRunning(true);
     setQueryError(null);
+    // Clear previous results immediately when running new query
+    setQueryRows([]);
+    setColumns([]);
     try {
       const result = await api.executeSql(query.trim());
       setExecutionTime(result.executionTimeMs);
@@ -146,6 +238,9 @@ export const SqlPlaygroundScreen: React.FC<SqlPlaygroundScreenProps> = ({
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'SQL Execution failed';
       setQueryError(errMsg);
+      // Clear stale results on error
+      setQueryRows([]);
+      setColumns([]);
       onShowToast(errMsg, 'error');
     } finally {
       setIsRunning(false);
@@ -202,20 +297,20 @@ export const SqlPlaygroundScreen: React.FC<SqlPlaygroundScreenProps> = ({
               Interactive SQL Console
             </h1>
             <span className="px-2.5 py-0.5 rounded-full bg-[#e9e8e5] text-[#57423e] text-[10px] font-mono uppercase font-semibold">
-              FREEPDB1.SCHEMA_CURATOR
+              artgallery_db (PostgreSQL 16)
             </span>
           </div>
           <p className="text-sm text-[#57423e] max-w-2xl">
-            Execute declarative relational queries against the curatorial catalogue. Inspect joins, cost execution plans, and row-level catalog assertions.
+            Execute declarative relational queries against the curatorial catalogue. Inspect joins, execution plans, and row-level catalog assertions.
           </p>
         </div>
 
-        {/* Live Node Cluster Stats */}
+        {/* Live Connection Stats */}
         <div className="flex items-center gap-3 mt-2 md:mt-0">
           <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-[#e8e7e4] shadow-xs">
             <div className="w-2 h-2 rounded-full bg-[#2e6a4f] animate-pulse"></div>
             <span className="text-xs font-mono text-[#57423e]">
-              SGA Cache: <span className="text-[#1a1c1a] font-semibold">94.8% Hit</span>
+              Connected: <span className="text-[#1a1c1a] font-semibold">localhost:5432</span>
             </span>
           </div>
           <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-[#e8e7e4] shadow-xs">
@@ -223,7 +318,7 @@ export const SqlPlaygroundScreen: React.FC<SqlPlaygroundScreenProps> = ({
               database
             </span>
             <span className="text-xs font-mono text-[#57423e]">
-              Active Session: <span className="text-[#1a1c1a] font-semibold">SID#412</span>
+              Session: <span className="text-[#1a1c1a] font-semibold">READ COMMITTED</span>
             </span>
           </div>
         </div>
@@ -243,7 +338,7 @@ export const SqlPlaygroundScreen: React.FC<SqlPlaygroundScreenProps> = ({
               </span>
             </div>
             <span className="text-[10px] uppercase text-[#57423e] bg-[#efeeeb] px-1.5 py-0.5 rounded font-mono font-semibold border border-[#e2e1dc]">
-              2 Tables
+              {schemaTables.length} Tables
             </span>
           </div>
 
@@ -264,256 +359,34 @@ export const SqlPlaygroundScreen: React.FC<SqlPlaygroundScreenProps> = ({
             />
           </div>
 
+          {/* Loading state */}
+          {schemaLoading && (
+            <div className="flex items-center justify-center py-4 text-xs text-[#57423e]">
+              <span className="material-symbols-outlined animate-spin mr-2">sync</span>
+              Loading schema...
+            </div>
+          )}
+
           {/* Collapsible Object Tree */}
-          <div className="flex flex-col gap-2 mt-1 text-xs font-mono">
-            {/* Table 1: ARTIST */}
-            <div className="flex flex-col rounded bg-[#f4f3f1]/70 border border-[#e8e7e4] overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setIsArtistOpen(!isArtistOpen)}
-                className="flex items-center justify-between w-full px-2.5 py-2 hover:bg-[#e9e8e5] transition-colors text-left cursor-pointer"
-              >
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className={`material-symbols-outlined text-[16px] text-[#57423e] transition-transform duration-150 ${
-                      isArtistOpen ? 'rotate-90' : ''
-                    }`}
-                  >
-                    chevron_right
-                  </span>
-                  <span className="material-symbols-outlined text-[16px] text-[#633808]">
-                    table_chart
-                  </span>
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleInsertToken('ARTIST');
-                    }}
-                    className="font-semibold text-[#1a1c1a] hover:text-[#7e2110] transition-colors"
-                  >
-                    ARTIST
-                  </span>
-                </div>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#e3e2e0] text-[#57423e]">
-                  3 cols
-                </span>
-              </button>
-
-              {isArtistOpen && (
-                <div className="flex flex-col py-1 pl-6 pr-2 gap-1 bg-white border-t border-[#e8e7e4]">
-                  <div
-                    onClick={() => handleInsertToken('a.ArtistID')}
-                    className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-[#f4f3f1] transition-colors cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="material-symbols-outlined text-[13px] text-[#7e2110]" title="Primary Key">
-                        key
-                      </span>
-                      <span className="text-[#1a1c1a] font-medium truncate group-hover:text-[#7e2110]">
-                        ArtistID
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-[#57423e] bg-[#efeeeb] px-1 py-0.5 rounded font-mono font-semibold">
-                      INT • PK
-                    </span>
-                  </div>
-
-                  <div
-                    onClick={() => handleInsertToken('a.ArtistName')}
-                    className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-[#f4f3f1] transition-colors cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="material-symbols-outlined text-[13px] text-[#57423e]">
-                        title
-                      </span>
-                      <span className="text-[#1a1c1a] truncate group-hover:text-[#7e2110]">
-                        ArtistName
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-[#57423e] bg-[#efeeeb] px-1 py-0.5 rounded font-mono">
-                      VARCHAR
-                    </span>
-                  </div>
-
-                  <div
-                    onClick={() => handleInsertToken('a.Country')}
-                    className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-[#f4f3f1] transition-colors cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="material-symbols-outlined text-[13px] text-[#57423e]">
-                        public
-                      </span>
-                      <span className="text-[#1a1c1a] truncate group-hover:text-[#7e2110]">
-                        Country
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-[#57423e] bg-[#efeeeb] px-1 py-0.5 rounded font-mono">
-                      CHAR(3)
-                    </span>
-                  </div>
-                </div>
-              )}
+          {!schemaLoading && (
+            <div className="flex flex-col gap-2 mt-1 text-xs font-mono">
+              {schemaTables
+                .filter((table) => 
+                  table.name.toLowerCase().includes(schemaSearch.toLowerCase()) ||
+                  table.columns.some((col) => col.name.toLowerCase().includes(schemaSearch.toLowerCase()))
+                )
+                .map((table) => (
+                  <SchemaTableNode
+                    key={table.name}
+                    table={table}
+                    onInsertToken={handleInsertToken}
+                    searchTerm={schemaSearch}
+                  />
+                ))}
             </div>
+          )}
 
-            {/* Table 2: ARTWORK */}
-            <div className="flex flex-col rounded bg-[#f4f3f1]/70 border border-[#e8e7e4] overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setIsArtworkOpen(!isArtworkOpen)}
-                className="flex items-center justify-between w-full px-2.5 py-2 hover:bg-[#e9e8e5] transition-colors text-left cursor-pointer"
-              >
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className={`material-symbols-outlined text-[16px] text-[#57423e] transition-transform duration-150 ${
-                      isArtworkOpen ? 'rotate-90' : ''
-                    }`}
-                  >
-                    chevron_right
-                  </span>
-                  <span className="material-symbols-outlined text-[16px] text-[#633808]">
-                    table_chart
-                  </span>
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleInsertToken('ARTWORK');
-                    }}
-                    className="font-semibold text-[#1a1c1a] hover:text-[#7e2110] transition-colors"
-                  >
-                    ARTWORK
-                  </span>
-                </div>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#e3e2e0] text-[#57423e]">
-                  7 cols
-                </span>
-              </button>
-
-              {isArtworkOpen && (
-                <div className="flex flex-col py-1 pl-6 pr-2 gap-1 bg-white border-t border-[#e8e7e4]">
-                  <div
-                    onClick={() => handleInsertToken('w.ArtworkID')}
-                    className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-[#f4f3f1] transition-colors cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="material-symbols-outlined text-[13px] text-[#7e2110]">
-                        key
-                      </span>
-                      <span className="text-[#1a1c1a] font-medium truncate group-hover:text-[#7e2110]">
-                        ArtworkID
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-[#57423e] bg-[#efeeeb] px-1 py-0.5 rounded font-mono font-semibold">
-                      INT • PK
-                    </span>
-                  </div>
-
-                  <div
-                    onClick={() => handleInsertToken('w.Title')}
-                    className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-[#f4f3f1] transition-colors cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="material-symbols-outlined text-[13px] text-[#57423e]">
-                        format_paint
-                      </span>
-                      <span className="text-[#1a1c1a] truncate group-hover:text-[#7e2110]">
-                        Title
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-[#57423e] bg-[#efeeeb] px-1 py-0.5 rounded font-mono">
-                      VARCHAR
-                    </span>
-                  </div>
-
-                  <div
-                    onClick={() => handleInsertToken('w.ArtistID')}
-                    className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-[#f4f3f1] transition-colors cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="material-symbols-outlined text-[13px] text-[#2e6a4f]">
-                        link
-                      </span>
-                      <span className="text-[#1a1c1a] truncate group-hover:text-[#7e2110]">
-                        ArtistID
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-[#57423e] bg-[#efeeeb] px-1 py-0.5 rounded font-mono">
-                      INT • FK
-                    </span>
-                  </div>
-
-                  <div
-                    onClick={() => handleInsertToken('w.Medium')}
-                    className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-[#f4f3f1] transition-colors cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="material-symbols-outlined text-[13px] text-[#57423e]">
-                        palette
-                      </span>
-                      <span className="text-[#1a1c1a] truncate group-hover:text-[#7e2110]">
-                        Medium
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-[#57423e] bg-[#efeeeb] px-1 py-0.5 rounded font-mono">
-                      VARCHAR
-                    </span>
-                  </div>
-
-                  <div
-                    onClick={() => handleInsertToken('w.Price')}
-                    className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-[#f4f3f1] transition-colors cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="material-symbols-outlined text-[13px] text-[#633808]">
-                        payments
-                      </span>
-                      <span className="text-[#1a1c1a] truncate group-hover:text-[#7e2110]">
-                        Price
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-[#57423e] bg-[#efeeeb] px-1 py-0.5 rounded font-mono">
-                      DECIMAL
-                    </span>
-                  </div>
-
-                  <div
-                    onClick={() => handleInsertToken('w.Status')}
-                    className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-[#f4f3f1] transition-colors cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="material-symbols-outlined text-[13px] text-[#57423e]">
-                        inventory_2
-                      </span>
-                      <span className="text-[#1a1c1a] truncate group-hover:text-[#7e2110]">
-                        Status
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-[#57423e] bg-[#efeeeb] px-1 py-0.5 rounded font-mono">
-                      ENUM
-                    </span>
-                  </div>
-
-                  <div
-                    onClick={() => handleInsertToken('w.YearCreated')}
-                    className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-[#f4f3f1] transition-colors cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="material-symbols-outlined text-[13px] text-[#57423e]">
-                        calendar_month
-                      </span>
-                      <span className="text-[#1a1c1a] truncate group-hover:text-[#7e2110]">
-                        YearCreated
-                      </span>
-                    </div>
-                    <span className="text-[9px] text-[#57423e] bg-[#efeeeb] px-1 py-0.5 rounded font-mono">
-                      NUMBER(4)
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Quick Syntax Injection Snippets */}
+{/* Quick Syntax Injection Snippets */}
           <div className="mt-2 p-2.5 bg-[#f4f3f1] rounded-lg border border-[#e8e7e4] flex flex-col gap-1.5">
             <span className="text-[10px] font-mono uppercase tracking-wider text-[#57423e] font-semibold">
               Quick Injection Snippets
@@ -521,24 +394,24 @@ export const SqlPlaygroundScreen: React.FC<SqlPlaygroundScreenProps> = ({
             <div className="flex flex-wrap gap-1">
               <button
                 type="button"
-                onClick={() => handleInsertToken('INNER JOIN ARTIST a ON w.ArtistID = a.ArtistID')}
+                onClick={() => handleInsertToken('INNER JOIN artists a ON w.artist_id = a.id')}
                 className="px-2 py-1 bg-white hover:bg-[#e9e8e5] border border-[#dfdeda] rounded text-[#1a1c1a] text-[11px] font-mono transition-colors text-left shadow-2xs cursor-pointer"
               >
-                JOIN Artist
+                JOIN Artists
               </button>
               <button
                 type="button"
-                onClick={() => handleInsertToken('WHERE w.Price >= 500000')}
+                onClick={() => handleInsertToken("WHERE w.price >= 500000")}
                 className="px-2 py-1 bg-white hover:bg-[#e9e8e5] border border-[#dfdeda] rounded text-[#1a1c1a] text-[11px] font-mono transition-colors text-left shadow-2xs cursor-pointer"
               >
-                Price &gt;= 500k
+                Price &ge; 500k
               </button>
               <button
                 type="button"
-                onClick={() => handleInsertToken('GROUP BY a.ArtistName HAVING count(*) > 1')}
+                onClick={() => handleInsertToken('GROUP BY a.name HAVING count(*) > 1')}
                 className="px-2 py-1 bg-white hover:bg-[#e9e8e5] border border-[#dfdeda] rounded text-[#1a1c1a] text-[11px] font-mono transition-colors text-left shadow-2xs cursor-pointer"
               >
-                Group &amp; Having
+                Group & Having
               </button>
             </div>
           </div>
@@ -572,12 +445,12 @@ export const SqlPlaygroundScreen: React.FC<SqlPlaygroundScreenProps> = ({
               {/* Target DB Pill */}
               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#f4f3f1] border border-[#e6e5e1] text-xs font-mono text-[#1a1c1a]">
                 <span className="w-2 h-2 rounded-full bg-[#2e6a4f]"></span>
-                <span className="font-semibold">Oracle FREEPDB1</span>
+                <span className="font-semibold">PostgreSQL 16</span>
               </div>
 
               {/* Dialect Badge */}
               <span className="px-2 py-1 rounded bg-[#e9e8e5] text-[10px] font-mono text-[#633808] uppercase font-bold border border-[#dedcd7]">
-                PL/SQL 23ai
+                PostgreSQL
               </span>
 
               {/* Preset Templates Selector */}
@@ -695,21 +568,23 @@ export const SqlPlaygroundScreen: React.FC<SqlPlaygroundScreenProps> = ({
                     </span>
                   </div>
                   <span className="text-xs font-mono text-[#57423e]">
-                    Optimizer: ALL_ROWS • Total Cost: 8.42
+                    PostgreSQL Planner • Total Cost: 8.42
                   </span>
                 </div>
                 <div className="bg-white p-3 rounded border border-[#dfdeda] text-xs font-mono text-[#1a1c1a] overflow-x-auto space-y-1">
-                  <div className="text-[#8c7873]">------------------------------------------------------------------------------------------</div>
-                  <div>| Id | Operation                      | Name         | Rows | Bytes | Cost (%CPU) | Time     |</div>
-                  <div className="text-[#8c7873]">------------------------------------------------------------------------------------------</div>
-                  <div>|  0 | SELECT STATEMENT               |              |    4 |   312 |     8   (0) | 00:00:01 |</div>
-                  <div>|  1 |   SORT ORDER BY                |              |    4 |   312 |     8   (0) | 00:00:01 |</div>
-                  <div>|* 2 |     HASH JOIN                  |              |    4 |   312 |     7   (0) | 00:00:01 |</div>
-                  <div>|* 3 |       TABLE ACCESS BY INDEX ROWID| ARTWORK      |    4 |   196 |     4   (0) | 00:00:01 |</div>
-                  <div>|* 4 |         INDEX RANGE SCAN       | IDX_ART_PRC  |    6 |       |     2   (0) | 00:00:01 |</div>
-                  <div>|  5 |       TABLE ACCESS FULL        | ARTIST       |   48 |  1392 |     3   (0) | 00:00:01 |</div>
-                  <div className="text-[#8c7873]">------------------------------------------------------------------------------------------</div>
-                  <div className="text-[#57423e] text-[11px] pt-1">Predicate Information: 2 - access("W"."ARTISTID"="A"."ARTISTID") | 4 - filter("W"."STATUS"='Exhibited')</div>
+                  <div className="text-[#8c7873]">-----------------------------------------------------------------------------------</div>
+                  <div>                                      QUERY PLAN                                      </div>
+                  <div className="text-[#8c7873]">-----------------------------------------------------------------------------------</div>
+                  <div>Sort  (cost=8.42..8.43 rows=4 width=78)</div>
+                  <div>  Sort Key: w.price DESC</div>
+                  <div>&rarr;  Hash Join  (cost=2.15..8.40 rows=4 width=78)</div>
+                  <div>        Hash Cond: (w.artist_id = a.id)</div>
+                  <div>        &rarr;  Seq Scan on artworks w  (cost=0.00..5.12 rows=4 width=62)</div>
+                  <div>              Filter: (price &ge; 350000 AND status = 'Exhibited')</div>
+                  <div>        &rarr;  Hash  (cost=1.13..1.13 rows=13 width=24)</div>
+                  <div>              &rarr;  Seq Scan on artists a  (cost=0.00..1.13 rows=13 width=24)</div>
+                  <div className="text-[#8c7873]">-----------------------------------------------------------------------------------</div>
+                  <div className="text-[#57423e] text-[11px] pt-1">PostgreSQL 16 EXPLAIN output (simulated for demo)</div>
                 </div>
               </div>
             )}
@@ -876,7 +751,7 @@ export const SqlPlaygroundScreen: React.FC<SqlPlaygroundScreenProps> = ({
                   Referential Constraint
                 </span>
                 <span className="text-[11px] font-mono text-[#57423e] truncate">
-                  FK_ARTWORK_ARTIST_01
+                  fk_artworks_artist
                 </span>
                 <span className="text-[10px] font-mono text-[#2e6a4f] font-semibold">
                   ON DELETE RESTRICT
@@ -893,10 +768,10 @@ export const SqlPlaygroundScreen: React.FC<SqlPlaygroundScreenProps> = ({
                   Cost Estimate
                 </span>
                 <span className="text-[11px] font-mono text-[#57423e] truncate">
-                  I/O Wait: 1.2ms (Zero disk spill)
+                  I/O Wait: 1.2ms
                 </span>
                 <span className="text-[10px] font-mono text-[#57423e]">
-                  Hash Match Engine: Verified
+                  Hash Join Engine: Verified
                 </span>
               </div>
             </div>
@@ -910,10 +785,10 @@ export const SqlPlaygroundScreen: React.FC<SqlPlaygroundScreenProps> = ({
                   Catalog Transaction
                 </span>
                 <span className="text-[11px] font-mono text-[#57423e] truncate">
-                  SCN: 1482910398 • Read Committed
+                  XID: 1482910398 • Read Committed
                 </span>
                 <span className="text-[10px] font-mono text-[#57423e]">
-                  Isolation: Snapshot Safe
+                  Isolation: MVCC Snapshot
                 </span>
               </div>
             </div>
